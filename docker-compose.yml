@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  plex-auth-server:
+    build: .
+    container_name: plex-auth-server
+    ports:
+      - "8080:8080"
+    environment:
+      # Required: Your Plex server owner token
+      - PLEX_TOKEN=${PLEX_TOKEN}
+
+      # Required: Your Plex server machine identifier
+      - PLEX_SERVER_ID=${PLEX_SERVER_ID}
+
+      # Optional: Client ID for OAuth (defaults to a generated UUID)
+      - PLEX_CLIENT_ID=${PLEX_CLIENT_ID:-cd72c25b-4d05-41d1-8aec-66a907585452}
+
+      # Optional: Plex API URL (defaults to https://plex.tv)
+      - PLEX_URL=${PLEX_URL:-https://plex.tv}
+
+      # Optional: Server listen address (defaults to :8080)
+      - SERVER_ADDR=${SERVER_ADDR:-:8080}
+
+      # Optional: OAuth callback URL
+      - CALLBACK_URL=${CALLBACK_URL:-http://localhost:8080/callback}
+
+      # Optional: Cookie domain (leave empty for current domain)
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
+
+      # Optional: Set to true for HTTPS-only cookies (defaults to false)
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    networks:
+      - plex-auth-network
+
+networks:
+  plex-auth-network:
+    driver: bridge
