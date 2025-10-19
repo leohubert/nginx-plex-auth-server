@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -9,6 +10,28 @@ import (
 	"github.com/hubert_i/nginx_plex_auth_server/internal/config"
 	"github.com/hubert_i/nginx_plex_auth_server/pkg/plex"
 )
+
+func extractTokenFromRequest(r *http.Request) string {
+	// Try Authorization header
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		if len(auth) > 7 && auth[:7] == "Bearer " {
+			return auth[7:]
+		}
+		return auth
+	}
+
+	// Try X-Plex-Token header
+	if token := r.Header.Get("X-Plex-Token"); token != "" {
+		return token
+	}
+
+	// Try cookie
+	if cookie, err := r.Cookie("X-Plex-Token"); err == nil {
+		return cookie.Value
+	}
+
+	return ""
+}
 
 func main() {
 	// Load configuration
@@ -64,6 +87,135 @@ func main() {
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
+	})
+
+	// Root endpoint - show welcome page
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Only handle exact root path
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
+		token := extractTokenFromRequest(r)
+		if token == "" {
+			// Not logged in - show login prompt
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Nginx Plex Auth Server</title>
+	<style>
+		body {
+			font-family: Arial, sans-serif;
+			max-width: 600px;
+			margin: 50px auto;
+			padding: 20px;
+			text-align: center;
+			background-color: #1a1a1a;
+			color: #fff;
+		}
+		h1 { color: #e5a00d; }
+		p { color: #ccc; }
+		a {
+			display: inline-block;
+			background-color: #e5a00d;
+			color: #000;
+			padding: 15px 40px;
+			border: none;
+			border-radius: 5px;
+			font-weight: bold;
+			font-size: 16px;
+			margin: 20px 0;
+			text-decoration: none;
+			transition: background-color 0.2s;
+		}
+		a:hover { background-color: #cc8800; }
+	</style>
+</head>
+<body>
+	<h1>Nginx Plex Auth Server</h1>
+	<p>Authentication server for Nginx using Plex OAuth</p>
+	<a href="/login">Login with Plex</a>
+	<p style="margin-top: 40px; font-size: 14px;">
+		<a href="/status" style="font-size: 14px; padding: 10px 20px; background-color: #282828;">Check Status</a>
+	</p>
+</body>
+</html>
+			`))
+		} else {
+			// Logged in - show status
+			valid, _ := plexClient.ValidateToken(token)
+			if valid {
+				hasAccess, _ := plexClient.CheckServerAccess(token, cfg.PlexServerID)
+				userInfo, _ := plexClient.GetUserInfo(token)
+
+				username := "Unknown"
+				if userInfo != nil {
+					username = userInfo.Username
+				}
+
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte(fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Nginx Plex Auth Server</title>
+	<style>
+		body {
+			font-family: Arial, sans-serif;
+			max-width: 600px;
+			margin: 50px auto;
+			padding: 20px;
+			text-align: center;
+			background-color: #1a1a1a;
+			color: #fff;
+		}
+		h1 { color: #e5a00d; }
+		p { color: #ccc; }
+		.status {
+			background-color: #282828;
+			padding: 20px;
+			border-radius: 5px;
+			margin: 20px 0;
+		}
+		.status-ok { color: #4CAF50; }
+		.status-error { color: #f44336; }
+		a {
+			display: inline-block;
+			background-color: #e5a00d;
+			color: #000;
+			padding: 10px 30px;
+			border: none;
+			border-radius: 5px;
+			font-weight: bold;
+			font-size: 14px;
+			margin: 10px 5px;
+			text-decoration: none;
+			transition: background-color 0.2s;
+		}
+		a:hover { background-color: #cc8800; }
+	</style>
+</head>
+<body>
+	<h1>Nginx Plex Auth Server</h1>
+	<div class="status">
+		<p><strong>Logged in as:</strong> %s</p>
+		<p class="%s"><strong>Server Access:</strong> %s</p>
+	</div>
+	<a href="/status">Check Status (JSON)</a>
+	<a href="/logout" style="background-color: #666;">Logout</a>
+</body>
+</html>
+				`, username,
+				   func() string { if hasAccess { return "status-ok" } else { return "status-error" } }(),
+				   func() string { if hasAccess { return "Granted ✓" } else { return "Denied ✗" } }())))
+			} else {
+				// Invalid token
+				oauthHandler.RenderSuccessPage(w)
+			}
+		}
 	})
 
 	// Start server

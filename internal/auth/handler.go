@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/hubert_i/nginx_plex_auth_server/internal/cache"
 	"github.com/hubert_i/nginx_plex_auth_server/internal/config"
 	"github.com/hubert_i/nginx_plex_auth_server/pkg/plex"
 )
@@ -12,6 +13,7 @@ import (
 type Handler struct {
 	config      *config.Config
 	plexClient  *plex.Client
+	tokenCache  *cache.TokenCache
 }
 
 // NewHandler creates a new authentication handler
@@ -19,6 +21,7 @@ func NewHandler(cfg *config.Config) *Handler {
 	return &Handler{
 		config:     cfg,
 		plexClient: plex.NewClient(cfg.PlexURL, cfg.PlexToken, cfg.PlexClientID),
+		tokenCache: cache.NewTokenCache(cfg.CacheTTL, cfg.CacheMaxSize),
 	}
 }
 
@@ -33,7 +36,26 @@ func (h *Handler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate token with Plex
+	// Check cache first
+	if cached, found := h.tokenCache.Get(token); found {
+		log.Println("Using cached token validation result")
+		if !cached.Valid {
+			log.Println("Invalid authentication token (cached)")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if !cached.HasAccess {
+			log.Println("User does not have access to the specified Plex server (cached)")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		log.Printf("Authentication and server access validation successful (cached, user: %s)", cached.Username)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Cache miss - validate with Plex
+	log.Println("Cache miss - validating token with Plex")
 	valid, err := h.plexClient.ValidateToken(token)
 	if err != nil {
 		log.Printf("Error validating token: %v", err)
@@ -42,6 +64,11 @@ func (h *Handler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !valid {
+		// Cache the invalid result
+		h.tokenCache.Set(token, &cache.TokenCacheEntry{
+			Valid:     false,
+			HasAccess: false,
+		})
 		log.Println("Invalid authentication token")
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -55,6 +82,23 @@ func (h *Handler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get user info for caching
+	userInfo, _ := h.plexClient.GetUserInfo(token)
+	username := "Unknown"
+	userID := 0
+	if userInfo != nil {
+		username = userInfo.Username
+		userID = userInfo.ID
+	}
+
+	// Cache the result
+	h.tokenCache.Set(token, &cache.TokenCacheEntry{
+		Valid:     true,
+		HasAccess: hasAccess,
+		UserID:    userID,
+		Username:  username,
+	})
+
 	if !hasAccess {
 		log.Println("User does not have access to the specified Plex server")
 		w.WriteHeader(http.StatusForbidden)
@@ -62,7 +106,7 @@ func (h *Handler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authentication and authorization successful
-	log.Println("Authentication and server access validation successful")
+	log.Printf("Authentication and server access validation successful (user: %s)", username)
 	w.WriteHeader(http.StatusOK)
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/hubert_i/nginx_plex_auth_server/internal/cache"
 	"github.com/hubert_i/nginx_plex_auth_server/internal/config"
 	"github.com/hubert_i/nginx_plex_auth_server/pkg/plex"
 )
@@ -16,6 +17,7 @@ import (
 type OAuthHandler struct {
 	config     *config.Config
 	plexClient *plex.Client
+	tokenCache *cache.TokenCache
 }
 
 // NewOAuthHandler creates a new OAuth handler
@@ -23,16 +25,32 @@ func NewOAuthHandler(cfg *config.Config, client *plex.Client) *OAuthHandler {
 	return &OAuthHandler{
 		config:     cfg,
 		plexClient: client,
+		tokenCache: cache.NewTokenCache(cfg.CacheTTL, cfg.CacheMaxSize),
 	}
 }
 
 // HandleLogin initiates the Plex OAuth flow
 func (h *OAuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	// Get the redirect URL from query parameter (where user was trying to go)
+	// This can come from:
+	// 1. 'redirect' query parameter (passed by nginx error page)
+	// 2. 'rd' query parameter (short form, compatible with other auth systems)
 	redirectURL := r.URL.Query().Get("redirect")
+	if redirectURL == "" {
+		redirectURL = r.URL.Query().Get("rd")
+	}
+	if redirectURL == "" {
+		// Try to get from Referer header as fallback
+		referer := r.Header.Get("Referer")
+		if referer != "" {
+			redirectURL = referer
+		}
+	}
 	if redirectURL == "" {
 		redirectURL = "/" // Default to home if no redirect specified
 	}
+
+	log.Printf("Login initiated with redirect URL: %s", redirectURL)
 
 	// Request a PIN from Plex
 	pinResp, err := h.plexClient.RequestAuthPin()
@@ -235,6 +253,13 @@ func (h *OAuthHandler) HandleClosePopup(w http.ResponseWriter, r *http.Request) 
 
 // HandleLogout clears the session cookie
 func (h *OAuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	// Get token before clearing to invalidate cache
+	token := extractTokenFromRequest(r)
+	if token != "" {
+		h.tokenCache.Invalidate(token)
+		log.Printf("Invalidated cached token on logout")
+	}
+
 	cookie := &http.Cookie{
 		Name:     "X-Plex-Token",
 		Value:    "",
@@ -540,11 +565,45 @@ func (h *OAuthHandler) CheckAuthStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if token != "" {
-		valid, _ := h.plexClient.ValidateToken(token)
-		if valid {
-			status["authenticated"] = true
-			hasAccess, _ := h.plexClient.CheckServerAccess(token, h.config.PlexServerID)
-			status["hasAccess"] = hasAccess
+		// Check cache first
+		if cached, found := h.tokenCache.Get(token); found {
+			status["authenticated"] = cached.Valid
+			status["hasAccess"] = cached.HasAccess
+			if cached.Username != "" {
+				status["username"] = cached.Username
+			}
+		} else {
+			// Cache miss - validate with Plex
+			valid, _ := h.plexClient.ValidateToken(token)
+			if valid {
+				status["authenticated"] = true
+				hasAccess, _ := h.plexClient.CheckServerAccess(token, h.config.PlexServerID)
+				status["hasAccess"] = hasAccess
+
+				// Get user info and cache the result
+				userInfo, _ := h.plexClient.GetUserInfo(token)
+				username := "Unknown"
+				userID := 0
+				if userInfo != nil {
+					username = userInfo.Username
+					userID = userInfo.ID
+					status["username"] = username
+				}
+
+				// Cache the result
+				h.tokenCache.Set(token, &cache.TokenCacheEntry{
+					Valid:     true,
+					HasAccess: hasAccess,
+					UserID:    userID,
+					Username:  username,
+				})
+			} else {
+				// Cache invalid token
+				h.tokenCache.Set(token, &cache.TokenCacheEntry{
+					Valid:     false,
+					HasAccess: false,
+				})
+			}
 		}
 	}
 

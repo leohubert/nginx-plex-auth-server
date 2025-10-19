@@ -9,6 +9,7 @@ A lightweight Go-based authentication server for Nginx's `auth_request` module t
 - Works with Nginx `auth_request` directive
 - Supports multiple token sources (Authorization header, X-Plex-Token header, cookies)
 - Validates both server owners and shared users
+- **In-memory cache system** to reduce API calls to Plex (configurable TTL)
 - Health check endpoint
 - Configurable via environment variables
 
@@ -21,7 +22,10 @@ A lightweight Go-based authentication server for Nginx's `auth_request` module t
 │       └── main.go
 ├── internal/
 │   ├── auth/           # Authentication logic
-│   │   └── handler.go
+│   │   ├── handler.go
+│   │   └── oauth.go
+│   ├── cache/          # Token caching system
+│   │   └── token_cache.go
 │   ├── config/         # Configuration management
 │   │   └── config.go
 │   └── middleware/     # HTTP middlewares (future use)
@@ -45,6 +49,8 @@ The server is configured using environment variables:
 - `CALLBACK_URL` (optional): OAuth callback URL (defaults to `http://localhost:8080/callback`)
 - `COOKIE_DOMAIN` (optional): Domain for session cookies (leave empty for current domain)
 - `COOKIE_SECURE` (optional): Set to `true` for HTTPS-only cookies (defaults to `false`)
+- `CACHE_TTL_SECONDS` (optional): Token cache TTL in seconds (defaults to `300` = 5 minutes)
+- `CACHE_MAX_SIZE` (optional): Maximum number of tokens to cache (defaults to `1000`)
 
 ### Getting Your Plex Server ID
 
@@ -125,6 +131,28 @@ location = /auth {
 
 - `GET /health` - Health check endpoint
 
+## Token Caching
+
+To minimize API calls to Plex and improve performance, the server implements an in-memory token cache system:
+
+- **Cache Duration**: Validated tokens are cached for 5 minutes by default (configurable via `CACHE_TTL_SECONDS`)
+- **Cache Size**: Up to 1000 tokens can be cached (configurable via `CACHE_MAX_SIZE`)
+- **Automatic Cleanup**: Expired entries are automatically removed every minute
+- **Cache Invalidation**: Tokens are removed from cache on logout
+
+### Cache Benefits
+
+- **Reduced API Load**: Each cached token eliminates 2-3 API calls to Plex
+- **Improved Response Time**: Auth requests are served instantly from cache
+- **Better User Experience**: Faster page loads for authenticated users
+
+### Cache Behavior
+
+- First request with a token: Validates with Plex API and caches the result
+- Subsequent requests (within TTL): Served from cache
+- After TTL expires: Token is revalidated with Plex API and cache is refreshed
+- Invalid tokens are also cached to prevent repeated failed API calls
+
 ## Authentication & Authorization
 
 The server performs two-step validation:
@@ -146,19 +174,28 @@ The server accepts authentication tokens in the following order of precedence:
 
 ## OAuth Login Flow
 
-This server supports Plex OAuth authentication with automatic session cookie creation:
+This server supports Plex OAuth authentication with automatic session cookie creation and redirect back to the original protected page:
 
-1. User visits `/login` to start authentication
-2. Server requests a PIN from Plex API
-3. User is shown a login page with:
-   - A "Login with Plex" button that opens Plex.tv in a new tab
+1. User tries to access a protected resource (e.g., `/protected/content`)
+2. Nginx `auth_request` sends request to `/auth` endpoint - authentication fails (401)
+3. Nginx `error_page 401` redirects to `/login?redirect=https://example.com/protected/content`
+4. Server requests a PIN from Plex API
+5. User is shown a login page with:
+   - A "Login with Plex" button that opens Plex.tv in a popup
    - The PIN code displayed for manual entry if needed
    - Automatic polling to detect when authentication completes
-4. User authenticates on Plex.tv
-5. JavaScript polls `/callback` endpoint to check if authentication completed
-6. Server verifies user has access to the specified Plex server
-7. On success, server creates a session cookie (`X-Plex-Token`) valid for 30 days
-8. User is redirected to success page
+6. User authenticates on Plex.tv in the popup
+7. JavaScript polls `/callback` endpoint to check if authentication completed
+8. Server verifies user has access to the specified Plex server
+9. On success, server creates a session cookie (`X-Plex-Token`) valid for 30 days
+10. User is **automatically redirected back to the original protected URL** they were trying to access
+
+### Important Notes:
+
+- The redirect URL is captured from the nginx `error_page` directive
+- After successful login, users are sent back to where they originally wanted to go
+- If no redirect URL is provided, users are sent to `/` (the welcome page)
+- The welcome page shows login status and provides quick access to login/logout
 
 ### Nginx Configuration for OAuth
 
@@ -172,9 +209,9 @@ location /protected/ {
     # Your protected content configuration
 }
 
-# Handle unauthorized access - redirect to login
+# Handle unauthorized access - redirect to login with original URL
 location @error401 {
-    return 302 http://localhost:8080/login;
+    return 302 http://localhost:8080/login?redirect=$scheme://$host$request_uri;
 }
 
 # Nginx auth check (internal only)
@@ -221,9 +258,36 @@ go test ./...
 
 #### Building the Docker Image
 
+##### Local Build (Single Architecture)
+
 ```bash
 docker build -t nginx-plex-auth-server .
 ```
+
+##### Multi-Platform Build (AMD64 + ARM64)
+
+For pushing images that work on both Intel/AMD and ARM servers:
+
+```bash
+# Create a new builder instance (first time only)
+docker buildx create --name multiplatform --use
+
+# Build and push for multiple platforms
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --tag leohubert/nginx-plex-auth-server:latest \
+  --push \
+  .
+
+# Or for GHCR
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --tag ghcr.io/leohubert/nginx-plex-auth-server:latest \
+  --push \
+  .
+```
+
+**Note:** Multi-platform builds with `--push` will automatically push to the registry. Make sure you're logged in first with `docker login`.
 
 #### Running with Docker
 
@@ -258,6 +322,8 @@ services:
       - PLEX_URL=https://plex.tv
       - COOKIE_SECURE=false
       - COOKIE_DOMAIN=
+      - CACHE_TTL_SECONDS=300
+      - CACHE_MAX_SIZE=1000
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
@@ -282,27 +348,27 @@ docker-compose up -d
 docker login
 
 # Tag your image with your Docker Hub username
-docker tag nginx-plex-auth-server your-username/nginx-plex-auth-server:latest
-docker tag nginx-plex-auth-server your-username/nginx-plex-auth-server:v1.0.0
+docker tag nginx-plex-auth-server leohubert/nginx-plex-auth-server:latest
+docker tag nginx-plex-auth-server leohubert/nginx-plex-auth-server:v1.0.0
 
 # Push to Docker Hub
-docker push your-username/nginx-plex-auth-server:latest
-docker push your-username/nginx-plex-auth-server:v1.0.0
+docker push leohubert/nginx-plex-auth-server:latest
+docker push leohubert/nginx-plex-auth-server:v1.0.0
 ```
 
 ##### GitHub Container Registry (GHCR)
 
 ```bash
 # Login to GitHub Container Registry
-echo $GITHUB_TOKEN | docker login ghcr.io -u your-github-username --password-stdin
+echo $GITHUB_TOKEN | docker login ghcr.io -u leohubert --password-stdin
 
 # Tag your image for GHCR
-docker tag nginx-plex-auth-server ghcr.io/your-github-username/nginx-plex-auth-server:latest
-docker tag nginx-plex-auth-server ghcr.io/your-github-username/nginx-plex-auth-server:v1.0.0
+docker tag nginx-plex-auth-server ghcr.io/leohubert/nginx-plex-auth-server:latest
+docker tag nginx-plex-auth-server ghcr.io/leohubert/nginx-plex-auth-server:v1.0.0
 
 # Push to GHCR
-docker push ghcr.io/your-github-username/nginx-plex-auth-server:latest
-docker push ghcr.io/your-github-username/nginx-plex-auth-server:v1.0.0
+docker push ghcr.io/leohubert/nginx-plex-auth-server:latest
+docker push ghcr.io/leohubert/nginx-plex-auth-server:v1.0.0
 ```
 
 ##### Private Registry
@@ -324,12 +390,12 @@ After pushing, others can pull and run your image:
 
 ```bash
 # From Docker Hub
-docker pull your-username/nginx-plex-auth-server:latest
-docker run -d -p 8080:8080 -e PLEX_TOKEN="token" -e PLEX_SERVER_ID="id" your-username/nginx-plex-auth-server:latest
+docker pull leohubert/nginx-plex-auth-server:latest
+docker run -d -p 8080:8080 -e PLEX_TOKEN="token" -e PLEX_SERVER_ID="id" leohubert/nginx-plex-auth-server:latest
 
 # From GHCR
-docker pull ghcr.io/your-github-username/nginx-plex-auth-server:latest
-docker run -d -p 8080:8080 -e PLEX_TOKEN="token" -e PLEX_SERVER_ID="id" ghcr.io/your-github-username/nginx-plex-auth-server:latest
+docker pull ghcr.io/leohubert/nginx-plex-auth-server:latest
+docker run -d -p 8080:8080 -e PLEX_TOKEN="token" -e PLEX_SERVER_ID="id" ghcr.io/leohubert/nginx-plex-auth-server:latest
 ```
 
 #### Docker Image Features

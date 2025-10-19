@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"time"
 )
 
 // Config holds the application configuration
@@ -15,6 +17,8 @@ type Config struct {
 	CallbackURL     string
 	CookieDomain    string
 	CookieSecure    bool
+	CacheTTL        time.Duration
+	CacheMaxSize    int
 }
 
 // Load reads configuration from environment variables
@@ -44,7 +48,23 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.PlexClientID == "" {
-		cfg.PlexClientID = "cd72c25b-4d05-41d1-8aec-66a907585452"
+		cfg.PlexClientID = "plex-auth-nginx-module"
+	}
+
+	// Cache configuration with defaults
+	cacheTTLSeconds := 300 // Default 5 minutes
+	if ttlEnv := os.Getenv("CACHE_TTL_SECONDS"); ttlEnv != "" {
+		if ttl, err := strconv.Atoi(ttlEnv); err == nil && ttl > 0 {
+			cacheTTLSeconds = ttl
+		}
+	}
+	cfg.CacheTTL = time.Duration(cacheTTLSeconds) * time.Second
+
+	cfg.CacheMaxSize = 1000 // Default max 1000 tokens
+	if maxSizeEnv := os.Getenv("CACHE_MAX_SIZE"); maxSizeEnv != "" {
+		if maxSize, err := strconv.Atoi(maxSizeEnv); err == nil && maxSize > 0 {
+			cfg.CacheMaxSize = maxSize
+		}
 	}
 
 	// Validate required fields
