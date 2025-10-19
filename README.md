@@ -123,7 +123,6 @@ location = /auth {
 
 - `GET /login` - Initiates Plex OAuth flow, displays login page with PIN
 - `GET /callback` - OAuth callback endpoint (called by JavaScript polling)
-- `GET /auth-success` - Success page after authentication
 - `GET /logout` - Clears session cookie and logs out user
 - `GET /status` - Returns JSON with authentication status
 

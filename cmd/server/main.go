@@ -8,6 +8,7 @@ import (
 
 	"github.com/hubert_i/nginx_plex_auth_server/internal/auth"
 	"github.com/hubert_i/nginx_plex_auth_server/internal/config"
+	"github.com/hubert_i/nginx_plex_auth_server/internal/health"
 	"github.com/hubert_i/nginx_plex_auth_server/pkg/plex"
 )
 
@@ -62,9 +63,26 @@ func main() {
 	}
 	log.Printf("✓ Authenticated as: %s (ID: %d)", userInfo.Username, userInfo.ID)
 
+	// Initialize token health monitor
+	tokenMonitor := health.NewTokenMonitor(plexClient, cfg.PlexToken, cfg.TokenHealthCheckTTL)
+
+	// Set callback for when token becomes invalid
+	tokenMonitor.SetInvalidTokenCallback(func(err error) {
+		if err != nil {
+			log.Printf("⚠️  ALERT: Token validation failed: %v", err)
+		} else {
+			log.Printf("❌ CRITICAL ALERT: PLEX_TOKEN is INVALID! Update your environment variable immediately!")
+		}
+	})
+
+	// Start the monitor
+	tokenMonitor.Start()
+	defer tokenMonitor.Stop()
+
 	// Create handlers
 	authHandler := auth.NewHandler(cfg)
 	oauthHandler := auth.NewOAuthHandler(cfg, plexClient)
+	healthHandler := health.NewHandler(tokenMonitor)
 
 	// Setup routes
 	// Auth endpoint for Nginx auth_request (returns status codes only)
@@ -74,20 +92,15 @@ func main() {
 	http.HandleFunc("/login", oauthHandler.HandleLogin)
 	http.HandleFunc("/auth/plex", oauthHandler.HandlePlexAuth)
 	http.HandleFunc("/callback", oauthHandler.HandleCallback)
-	http.HandleFunc("/close-popup", oauthHandler.HandleClosePopup)
-	http.HandleFunc("/auth-success", func(w http.ResponseWriter, r *http.Request) {
-		oauthHandler.RenderSuccessPage(w)
-	})
 	http.HandleFunc("/logout", oauthHandler.HandleLogout)
 
 	// Status endpoint
 	http.HandleFunc("/status", oauthHandler.CheckAuthStatus)
 
-	// Health check endpoint
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	// Health check endpoints
+	http.HandleFunc("/health", healthHandler.HandleHealthCheck)
+	http.HandleFunc("/health/token", healthHandler.HandleTokenHealth)
+	http.HandleFunc("/health/detailed", healthHandler.HandleDetailedHealth)
 
 	// Root endpoint - show welcome page
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +113,8 @@ func main() {
 		token := extractTokenFromRequest(r)
 		if token == "" {
 			// Not logged in - show login prompt
-			w.Header().Set("Content-Type", "text/html")
+							w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
 			w.Write([]byte(`
 <!DOCTYPE html>
 <html>
@@ -156,7 +170,7 @@ func main() {
 					username = userInfo.Username
 				}
 
-				w.Header().Set("Content-Type", "text/html")
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Write([]byte(fmt.Sprintf(`
 <!DOCTYPE html>
 <html>
@@ -213,7 +227,7 @@ func main() {
 				   func() string { if hasAccess { return "Granted ✓" } else { return "Denied ✗" } }())))
 			} else {
 				// Invalid token
-				oauthHandler.RenderSuccessPage(w)
+
 			}
 		}
 	})

@@ -9,16 +9,17 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	PlexURL         string
-	PlexToken       string
-	PlexServerID    string
-	PlexClientID    string
-	ServerAddr      string
-	CallbackURL     string
-	CookieDomain    string
-	CookieSecure    bool
-	CacheTTL        time.Duration
-	CacheMaxSize    int
+	PlexURL              string
+	PlexToken            string
+	PlexServerID         string
+	PlexClientID         string
+	ServerAddr           string
+	CallbackURL          string
+	CookieDomain         string
+	CookieSecure         bool
+	CacheTTL             time.Duration
+	CacheMaxSize         int
+	TokenHealthCheckTTL  time.Duration
 }
 
 // Load reads configuration from environment variables
@@ -66,6 +67,15 @@ func Load() (*Config, error) {
 			cfg.CacheMaxSize = maxSize
 		}
 	}
+
+	// Token health check configuration
+	tokenHealthCheckSeconds := 300 // Default 5 minutes
+	if healthEnv := os.Getenv("TOKEN_HEALTH_CHECK_INTERVAL"); healthEnv != "" {
+		if interval, err := strconv.Atoi(healthEnv); err == nil && interval > 0 {
+			tokenHealthCheckSeconds = interval
+		}
+	}
+	cfg.TokenHealthCheckTTL = time.Duration(tokenHealthCheckSeconds) * time.Second
 
 	// Validate required fields
 	if cfg.PlexToken == "" {

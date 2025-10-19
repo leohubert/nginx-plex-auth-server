@@ -162,7 +162,7 @@ func (h *OAuthHandler) HandlePlexAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html")
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(fmt.Sprintf(`
 <!DOCTYPE html>
 <html>
@@ -207,50 +207,6 @@ func (h *OAuthHandler) HandlePlexAuth(w http.ResponseWriter, r *http.Request) {
 	`, authURL)))
 }
 
-// HandleClosePopup shows a page that closes the popup window
-func (h *OAuthHandler) HandleClosePopup(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`
-<!DOCTYPE html>
-<html>
-<head>
-	<title>Authentication Complete</title>
-	<style>
-		body {
-			font-family: Arial, sans-serif;
-			max-width: 600px;
-			margin: 50px auto;
-			padding: 20px;
-			text-align: center;
-			background-color: #1a1a1a;
-			color: #fff;
-		}
-		h1 { color: #e5a00d; }
-		.success-icon {
-			font-size: 64px;
-			margin: 20px 0;
-		}
-	</style>
-</head>
-<body>
-	<div class="success-icon">✓</div>
-	<h1>Authentication Complete!</h1>
-	<p>This window will close automatically...</p>
-	<script>
-		// Try to close the window
-		setTimeout(function() {
-			window.close();
-			// If window.close() doesn't work, show a message
-			setTimeout(function() {
-				document.body.innerHTML = '<h1>✓</h1><p>Authentication complete! You can close this window.</p>';
-			}, 500);
-		}, 1000);
-	</script>
-</body>
-</html>
-	`))
-}
-
 // HandleLogout clears the session cookie
 func (h *OAuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	// Get token before clearing to invalidate cache
@@ -277,7 +233,8 @@ func (h *OAuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("User logged out, session cookie cleared")
 
-	w.Header().Set("Content-Type", "text/html")
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
 	w.Write([]byte(`
 		<!DOCTYPE html>
 		<html>
@@ -509,51 +466,14 @@ func (h *OAuthHandler) renderLoginPage(w http.ResponseWriter, authURL string, pi
 		"RedirectURL": redirectURL,
 	}
 
-	w.Header().Set("Content-Type", "text/html")
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
 	if err := t.Execute(w, data); err != nil {
 		log.Printf("Error rendering login page: %v", err)
 	}
 }
 
-// RenderSuccessPage renders the success page after authentication
-func (h *OAuthHandler) RenderSuccessPage(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`
-<!DOCTYPE html>
-<html>
-<head>
-	<title>Authentication Successful</title>
-	<style>
-		body {
-			font-family: Arial, sans-serif;
-			max-width: 600px;
-			margin: 50px auto;
-			padding: 20px;
-			text-align: center;
-			background-color: #1a1a1a;
-			color: #fff;
-		}
-		h1 { color: #e5a00d; }
-		.success-icon {
-			font-size: 64px;
-			margin: 20px 0;
-		}
-		a {
-			color: #e5a00d;
-			text-decoration: none;
-		}
-		a:hover { text-decoration: underline; }
-	</style>
-</head>
-<body>
-	<div class="success-icon">✓</div>
-	<h1>Authentication Successful!</h1>
-	<p>You are now logged in and have access to the protected resources.</p>
-	<p>You can close this window or <a href="/">return to home</a>.</p>
-</body>
-</html>
-	`))
-}
+
 
 // CheckAuthStatus returns the authentication status as JSON
 func (h *OAuthHandler) CheckAuthStatus(w http.ResponseWriter, r *http.Request) {
