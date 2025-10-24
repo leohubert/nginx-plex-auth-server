@@ -21,8 +21,13 @@ func (s *Server) deleteSessionCookie(res http.ResponseWriter, req *http.Request)
 	}
 
 	clearedCookie := &http.Cookie{
-		Name:  "X-Plex-Token",
-		Value: "",
+		Name:     "X-Plex-Token",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   s.CookieSecure,
+		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(res, clearedCookie)
 }

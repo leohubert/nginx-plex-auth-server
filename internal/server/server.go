@@ -85,7 +85,7 @@ func NewServer(opts Options) *Server {
 	router.Path("/auth").HandlerFunc(server.AuthHandler)
 	router.Path("/auth/generate-pin").HandlerFunc(server.GeneratePinHandler)
 	router.Path("/callback").HandlerFunc(server.CallbackHandler)
-	router.Path("/deleteSessionCookie").HandlerFunc(server.LogoutHandler)
+	router.Path("/logout").HandlerFunc(server.LogoutHandler)
 
 	return server
 }
