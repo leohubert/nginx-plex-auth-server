@@ -17,21 +17,31 @@ A lightweight Go-based authentication server for Nginx's `auth_request` module t
 
 ```
 .
+├── main.go              # Application entry point
 ├── cmd/
-│   └── server/          # Application entry point
-│       └── main.go
+│   ├── bootstrap.go    # Application bootstrap and dependency injection
+│   └── api.go          # API server command
 ├── internal/
-│   ├── auth/           # Authentication logic
-│   │   ├── handler.go
-│   │   └── oauth.go
 │   ├── cache/          # Token caching system
 │   │   └── token_cache.go
-│   ├── config/         # Configuration management
-│   │   └── config.go
-│   └── middleware/     # HTTP middlewares (future use)
+│   ├── plex/           # Plex API client implementation
+│   │   ├── client.go
+│   │   ├── create_auth_pin.go
+│   │   ├── check_auth_pin.go
+│   │   ├── check_server_access.go
+│   │   └── ...
+│   └── server/         # HTTP server and handlers
+│       ├── server.go
+│       ├── auth.go
+│       ├── login.go
+│       ├── callback.go
+│       ├── logout.go
+│       └── views/      # Templ templates
 ├── pkg/
-│   └── plex/          # Plex API client
-│       └── client.go
+│   ├── envtb/          # Environment variable utilities
+│   ├── logtb/          # Logging utilities
+│   ├── errtb/          # Error handling utilities
+│   └── ostb/           # OS utilities (signal handling)
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -41,15 +51,16 @@ A lightweight Go-based authentication server for Nginx's `auth_request` module t
 
 The server is configured using environment variables:
 
-- `PLEX_TOKEN` (required): Your Plex server owner's authentication token (used to verify server access)
 - `PLEX_SERVER_ID` (required): The machine identifier of your Plex server
 - `PLEX_CLIENT_ID` (optional): Client identifier for Plex OAuth (defaults to `nginx-plex-auth-server`)
 - `PLEX_URL` (optional): Plex API URL (defaults to `https://plex.tv`)
-- `SERVER_ADDR` (optional): Server listen address (defaults to `:8080`)
+- `SERVER_ADDR` (optional): Server listen address (defaults to `localhost:8080`)
 - `COOKIE_DOMAIN` (optional): Domain for session cookies (leave empty for current domain)
 - `COOKIE_SECURE` (optional): Set to `true` for HTTPS-only cookies (defaults to `false`)
-- `CACHE_TTL_SECONDS` (optional): Token cache TTL in seconds (defaults to `300` = 5 minutes)
-- `CACHE_MAX_SIZE` (optional): Maximum number of tokens to cache (defaults to `1000`)
+- `CACHE_TTL` (optional): Token cache TTL duration (defaults to `10s`, supports format like `1m`, `30s`, etc.)
+- `CACHE_MAX_SIZE` (optional): Maximum number of tokens to cache (defaults to `100`)
+- `LOG_FORMAT` (optional): Log format, either `json` or `console` (defaults to `json`)
+- `SERVER_ACCESS_LOG` (optional): Enable HTTP access logging (defaults to `false`)
 
 ### Getting Your Plex Server ID
 
@@ -69,24 +80,30 @@ curl -X GET "https://plex.tv/api/v2/resources?includeHttps=1&X-Plex-Token=YOUR_T
 ### Building
 
 ```bash
-go build -o bin/auth-server ./cmd/server
+go build -o bin/auth-server .
 ```
 
 ### Running
 
 ```bash
-export PLEX_TOKEN="your-plex-owner-token"
 export PLEX_SERVER_ID="your-server-machine-id"
-export SERVER_ADDR=":8080"
-./bin/auth-server
+export SERVER_ADDR="localhost:8080"
+./bin/auth-server api
 ```
 
 Or with Go:
 
 ```bash
-export PLEX_TOKEN="your-plex-owner-token"
 export PLEX_SERVER_ID="your-server-machine-id"
-go run ./cmd/server/main.go
+go run . api
+```
+
+Or using a `.env` file (recommended):
+
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+go run . api
 ```
 
 ### Nginx Configuration
@@ -120,10 +137,10 @@ location = /auth {
 
 ### OAuth Flow Endpoints
 
-- `GET /login` - Initiates Plex OAuth flow, displays login page with PIN
-- `GET /callback` - OAuth callback endpoint (called by JavaScript polling)
+- `GET /` - Initiates Plex OAuth flow, displays login page with PIN
+- `GET /auth/generate-pin` - Generates a new Plex OAuth PIN for authentication
+- `GET /callback` - OAuth callback endpoint (called by JavaScript polling to check authentication status)
 - `GET /logout` - Clears session cookie and logs out user
-- `GET /status` - Returns JSON with authentication status
 
 ### Utility Endpoints
 
@@ -133,8 +150,8 @@ location = /auth {
 
 To minimize API calls to Plex and improve performance, the server implements an in-memory token cache system:
 
-- **Cache Duration**: Validated tokens are cached for 5 minutes by default (configurable via `CACHE_TTL_SECONDS`)
-- **Cache Size**: Up to 1000 tokens can be cached (configurable via `CACHE_MAX_SIZE`)
+- **Cache Duration**: Validated tokens are cached for 10 seconds by default (configurable via `CACHE_TTL`)
+- **Cache Size**: Up to 100 tokens can be cached (configurable via `CACHE_MAX_SIZE`)
 - **Automatic Cleanup**: Expired entries are automatically removed every minute
 - **Cache Invalidation**: Tokens are removed from cache on logout
 
@@ -155,7 +172,7 @@ To minimize API calls to Plex and improve performance, the server implements an 
 
 The server performs two-step validation:
 
-1. **Token Validation**: Verifies the Plex token is valid
+1. **Token Validation**: Verifies the Plex token is valid by checking with the Plex API
 2. **Server Access Check**: Confirms the user has access to the specified Plex server (either as owner or shared user)
 
 The server accepts authentication tokens in the following order of precedence:
@@ -166,9 +183,10 @@ The server accepts authentication tokens in the following order of precedence:
 
 ### How Server Access Works
 
-- If the authenticating user is the server owner (matches `PLEX_TOKEN`), access is granted
-- If the user is not the owner, the server checks if they have shared access to the specified server
-- Only users explicitly shared on the Plex server will be granted access
+- The server validates the user's token against the Plex API
+- It then checks if the user has access to the server specified by `PLEX_SERVER_ID`
+- Access is granted if the user is either the server owner or has been granted shared access
+- Only users explicitly authorized on the Plex server will be granted access
 
 ## OAuth Login Flow
 
@@ -176,8 +194,8 @@ This server supports Plex OAuth authentication with automatic session cookie cre
 
 1. User tries to access a protected resource (e.g., `/protected/content`)
 2. Nginx `auth_request` sends request to `/auth` endpoint - authentication fails (401)
-3. Nginx `error_page 401` redirects to `/login?redirect=https://example.com/protected/content`
-4. Server requests a PIN from Plex API
+3. Nginx `error_page 401` redirects to `/?redirect=https://example.com/protected/content`
+4. Server generates a PIN via `/auth/generate-pin` endpoint
 5. User is shown a login page with:
    - A "Login with Plex" button that opens Plex.tv in a popup
    - The PIN code displayed for manual entry if needed
@@ -192,8 +210,8 @@ This server supports Plex OAuth authentication with automatic session cookie cre
 
 - The redirect URL is captured from the nginx `error_page` directive
 - After successful login, users are sent back to where they originally wanted to go
-- If no redirect URL is provided, users are sent to `/` (the welcome page)
-- The welcome page shows login status and provides quick access to login/logout
+- If no redirect URL is provided, users remain on the home page
+- Session cookies are HttpOnly and SameSite=Lax for security
 
 ### Nginx Configuration for OAuth
 

@@ -7,11 +7,15 @@ import (
 )
 
 func (s *Server) getSessionCookie(req *http.Request) string {
-	plexToken, _ := req.Cookie("X-Plex-Token")
-	if plexToken == nil {
-		return ""
+	if authHeader := req.Header.Get("X-Plex-Token"); authHeader != "" {
+		return authHeader
 	}
-	return plexToken.Value
+
+	plexToken, _ := req.Cookie("X-Plex-Token")
+	if plexToken != nil {
+		return plexToken.Value
+	}
+	return ""
 }
 
 func (s *Server) deleteSessionCookie(res http.ResponseWriter, req *http.Request) {
