@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates
@@ -14,7 +14,7 @@ COPY . .
 RUN go mod download && go mod verify
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o /app/bin/auth-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o /app/bin/server ./
 
 # Runtime stage
 FROM alpine:latest
@@ -29,7 +29,7 @@ RUN addgroup -g 1000 appuser && \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/bin/auth-server .
+COPY --from=builder /app/bin/server /server
 
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
@@ -45,4 +45,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
 # Run the application
-ENTRYPOINT ["/app/auth-server"]
+ENTRYPOINT ["/server"]
+CMD ["api"]

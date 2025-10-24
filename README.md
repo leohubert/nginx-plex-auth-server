@@ -46,7 +46,6 @@ The server is configured using environment variables:
 - `PLEX_CLIENT_ID` (optional): Client identifier for Plex OAuth (defaults to `nginx-plex-auth-server`)
 - `PLEX_URL` (optional): Plex API URL (defaults to `https://plex.tv`)
 - `SERVER_ADDR` (optional): Server listen address (defaults to `:8080`)
-- `CALLBACK_URL` (optional): OAuth callback URL (defaults to `http://localhost:8080/callback`)
 - `COOKIE_DOMAIN` (optional): Domain for session cookies (leave empty for current domain)
 - `COOKIE_SECURE` (optional): Set to `true` for HTTPS-only cookies (defaults to `false`)
 - `CACHE_TTL_SECONDS` (optional): Token cache TTL in seconds (defaults to `300` = 5 minutes)

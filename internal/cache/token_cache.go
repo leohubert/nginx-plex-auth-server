@@ -7,27 +7,29 @@ import (
 
 // TokenCacheEntry represents a cached token validation result
 type TokenCacheEntry struct {
-	Valid      bool
-	HasAccess  bool
-	UserID     int
-	Username   string
-	ExpiresAt  time.Time
+	Valid     bool
+	HasAccess bool
+	ExpiresAt time.Time
 }
 
-// TokenCache provides a thread-safe cache for token validation results
-type TokenCache struct {
+// CacheClient provides a thread-safe cache for token validation results
+
+type Options struct {
+	TTL     time.Duration
+	MaxSize int
+}
+
+type Client struct {
+	opts    Options
 	mu      sync.RWMutex
 	entries map[string]*TokenCacheEntry
-	ttl     time.Duration
-	maxSize int
 }
 
-// NewTokenCache creates a new token cache with specified TTL and max size
-func NewTokenCache(ttl time.Duration, maxSize int) *TokenCache {
-	cache := &TokenCache{
+// NewCacheClient creates a new token cache with specified TTL and max size
+func NewCacheClient(opts Options) *Client {
+	cache := &Client{
+		opts:    opts,
 		entries: make(map[string]*TokenCacheEntry),
-		ttl:     ttl,
-		maxSize: maxSize,
 	}
 
 	// Start background cleanup goroutine
@@ -37,7 +39,7 @@ func NewTokenCache(ttl time.Duration, maxSize int) *TokenCache {
 }
 
 // Get retrieves a cached token validation result
-func (c *TokenCache) Get(token string) (*TokenCacheEntry, bool) {
+func (c *Client) Get(token string) (*TokenCacheEntry, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -55,35 +57,35 @@ func (c *TokenCache) Get(token string) (*TokenCacheEntry, bool) {
 }
 
 // Set stores a token validation result in the cache
-func (c *TokenCache) Set(token string, entry *TokenCacheEntry) {
+func (c *Client) Set(token string, entry *TokenCacheEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Check if we need to evict entries
-	if len(c.entries) >= c.maxSize {
+	if len(c.entries) >= c.opts.MaxSize {
 		c.evictOldest()
 	}
 
-	entry.ExpiresAt = time.Now().Add(c.ttl)
+	entry.ExpiresAt = time.Now().Add(c.opts.TTL)
 	c.entries[token] = entry
 }
 
 // Invalidate removes a token from the cache
-func (c *TokenCache) Invalidate(token string) {
+func (c *Client) Invalidate(token string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, token)
 }
 
 // Clear removes all entries from the cache
-func (c *TokenCache) Clear() {
+func (c *Client) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = make(map[string]*TokenCacheEntry)
 }
 
 // Size returns the current number of cached entries
-func (c *TokenCache) Size() int {
+func (c *Client) Size() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.entries)
@@ -91,7 +93,7 @@ func (c *TokenCache) Size() int {
 
 // evictOldest removes the oldest entry from the cache
 // Must be called with lock held
-func (c *TokenCache) evictOldest() {
+func (c *Client) evictOldest() {
 	var oldestToken string
 	var oldestTime time.Time
 
@@ -108,7 +110,7 @@ func (c *TokenCache) evictOldest() {
 }
 
 // cleanupExpired periodically removes expired entries
-func (c *TokenCache) cleanupExpired() {
+func (c *Client) cleanupExpired() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
