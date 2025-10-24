@@ -2,8 +2,9 @@ package server
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
+
+	"go.uber.org/zap"
 )
 
 // GeneratePinResponse represents the JSON response for PIN generation
@@ -23,12 +24,12 @@ func (s *Server) GeneratePinHandler(w http.ResponseWriter, r *http.Request) {
 	// Request a PIN from Plex
 	pinResp, err := s.PlexClient.CreateAuthPin()
 	if err != nil {
-		log.Printf("Error requesting auth PIN: %v", err)
+		s.Logger.Error("Error requesting auth PIN", zap.Error(err))
 		http.Error(w, "Failed to initiate authentication", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Generated auth PIN: %s (ID: %d)", pinResp.Code, pinResp.ID)
+	s.Logger.Info("Generated auth PIN", zap.String("code", pinResp.Code), zap.Int("id", pinResp.ID))
 
 	authURL := s.PlexClient.CreateAuthURL(pinResp.Code)
 
@@ -41,7 +42,7 @@ func (s *Server) GeneratePinHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Error encoding response: %v", err)
+		s.Logger.Error("Error encoding response", zap.Error(err))
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 		return
 	}

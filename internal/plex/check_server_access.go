@@ -33,10 +33,10 @@ func (c *Client) CheckServerAccess(userToken string) (bool, error) {
 	// Next, get the list of servers shared with the user
 	apiResources, err := do[MediaContainer](c.httpClient, &Request{
 		Method: "GET",
-		URL:    c.opts.BaseURL + "/api/resources?includeHttps=1&includeRelay=1&includeSharedServers=1",
+		URL:    c.BaseURL + "/api/resources?includeHttps=1&includeRelay=1&includeSharedServers=1",
 		Headers: map[string]string{
 			"X-Plex-Token":             userToken,
-			"X-Plex-Client-Identifier": c.opts.ClientID,
+			"X-Plex-Client-Identifier": c.ClientID,
 		},
 	})
 	if err != nil {
@@ -46,7 +46,7 @@ func (c *Client) CheckServerAccess(userToken string) (bool, error) {
 	// Check if the specified server ID is in the list of shared servers
 	hasAccess := false
 	for _, device := range apiResources.Devices {
-		if device.ClientIdentifier == c.opts.ServerID {
+		if device.ClientIdentifier == c.ServerID {
 			hasAccess = true
 			break
 		}

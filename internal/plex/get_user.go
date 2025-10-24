@@ -13,7 +13,7 @@ type UserInfo struct {
 func (c *Client) GetUserInfo(token string) (*UserInfo, error) {
 	userInfo, err := do[UserInfo](c.httpClient, &Request{
 		Method: "GET",
-		URL:    c.opts.BaseURL + "/api/v2/user",
+		URL:    c.BaseURL + "/api/v2/user",
 		Headers: map[string]string{
 			"X-Plex-Token": token,
 			"Accept":       "application/json",

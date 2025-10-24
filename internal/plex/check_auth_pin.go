@@ -21,10 +21,10 @@ type apiCheckAuthPinResponse struct {
 func (c *Client) CheckAuthPin(pinID int) (*CheckAuthPinResponse, error) {
 	res, err := do[apiCheckAuthPinResponse](c.httpClient, &Request{
 		Method: "GET",
-		URL:    fmt.Sprintf("%s/api/v2/pins/%d", c.opts.BaseURL, pinID),
+		URL:    fmt.Sprintf("%s/api/v2/pins/%d", c.BaseURL, pinID),
 		Headers: map[string]string{
 			"Accept":                   "application/json",
-			"X-Plex-Client-Identifier": c.opts.ClientID,
+			"X-Plex-Client-Identifier": c.ClientID,
 		},
 	})
 	if err != nil {

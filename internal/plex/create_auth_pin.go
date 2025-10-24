@@ -13,12 +13,12 @@ func (c *Client) CreateAuthPin() (*AuthPinResponse, error) {
 
 	pinResp, err := do[AuthPinResponse](c.httpClient, &Request{
 		Method: "POST",
-		URL:    c.opts.BaseURL + "/api/v2/pins?strong=true",
+		URL:    c.BaseURL + "/api/v2/pins?strong=true",
 		Headers: map[string]string{
 			"Accept":                   "application/json",
 			"X-Plex-Product":           "Nginx Auth Server",
 			"X-Plex-Version":           "1.0",
-			"X-Plex-Client-Identifier": c.opts.ClientID,
+			"X-Plex-Client-Identifier": c.ClientID,
 			"X-Plex-Model":             "Plex OAuth",
 			"X-Plex-Platform":          "Web",
 			"X-Plex-Platform-Version":  "1.0",

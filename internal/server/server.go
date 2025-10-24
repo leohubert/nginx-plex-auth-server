@@ -8,7 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/leohubert/nginx-plex-auth-server/internal/cache"
-	"github.com/leohubert/nginx-plex-auth-server/pkg/plex"
+	"github.com/leohubert/nginx-plex-auth-server/internal/plex"
 	"go.uber.org/zap"
 )
 
@@ -16,6 +16,7 @@ type Options struct {
 	Logger       *zap.Logger
 	PlexClient   *plex.Client
 	CacheClient  *cache.Client
+	AccessLog    bool
 	ListenAddr   string
 	TLSCrt       string
 	TLSKey       string
@@ -29,7 +30,7 @@ type Server struct {
 	server *http.Server
 }
 
-func LoggerMiddleware(logger *zap.Logger) mux.MiddlewareFunc {
+func AccessLogMiddleware(logger *zap.Logger) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -73,8 +74,10 @@ func NewServer(opts Options) *Server {
 		},
 	}
 
-	router.Use(LoggerMiddleware(opts.Logger))
 	router.Use(CORSMiddleware)
+	if opts.AccessLog {
+		router.Use(AccessLogMiddleware(opts.Logger))
+	}
 
 	// Authentication and OAuth routes
 	router.Path("/").HandlerFunc(server.LoginHandler)

@@ -13,14 +13,14 @@ type Options struct {
 
 // Client represents a Plex API client
 type Client struct {
-	opts       Options
+	Options
 	httpClient *http.Client
 }
 
 // NewClient creates a new Plex API client
 func NewClient(opts Options) *Client {
 	return &Client{
-		opts: opts,
+		Options: opts,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},

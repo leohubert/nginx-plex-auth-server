@@ -17,9 +17,10 @@ func ApiCmd(env *Env, services *Services) {
 	})
 
 	httpServer := server.NewServer(server.Options{
-		Logger:       services.Logger,
+		Logger:       services.Logger.With(zap.String("component", "http_server")),
 		ListenAddr:   env.ServerAddr,
 		PlexClient:   services.PlexClient,
+		AccessLog:    env.ServerAccessLog,
 		CacheClient:  cacheClient,
 		CookieDomain: env.CookieDomain,
 		CookieSecure: env.CookieSecure,

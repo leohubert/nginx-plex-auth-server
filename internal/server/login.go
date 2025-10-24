@@ -1,10 +1,10 @@
 package server
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/leohubert/nginx-plex-auth-server/internal/server/views"
+	"go.uber.org/zap"
 )
 
 // LoginHandler initiates the Plex OAuth flow
@@ -12,7 +12,7 @@ func (s *Server) LoginHandler(res http.ResponseWriter, req *http.Request) {
 	authToken := s.getSessionCookie(req)
 
 	if authToken == "" {
-		renderAnonymousLoginPage(res, req)
+		renderAnonymousLoginPage(s, res, req)
 		return
 	}
 
@@ -20,7 +20,7 @@ func (s *Server) LoginHandler(res http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		s.Logger.Error("Failed to get user info: " + err.Error())
 		s.deleteSessionCookie(res, req)
-		renderAnonymousLoginPage(res, req)
+		renderAnonymousLoginPage(s, res, req)
 		return
 	}
 
@@ -38,13 +38,13 @@ func (s *Server) LoginHandler(res http.ResponseWriter, req *http.Request) {
 
 	res.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := component.Render(req.Context(), res); err != nil {
-		log.Printf("Error rendering login page: %v", err)
+		s.Logger.Error("Error rendering login page", zap.Error(err))
 		http.Error(res, "Failed to render page", http.StatusInternalServerError)
 		return
 	}
 }
 
-func renderAnonymousLoginPage(res http.ResponseWriter, req *http.Request) {
+func renderAnonymousLoginPage(s *Server, res http.ResponseWriter, req *http.Request) {
 	// Render the login page without user info
 	component := views.LoginPage(views.LoginPageData{
 		IsLoggedIn: false,
@@ -53,7 +53,7 @@ func renderAnonymousLoginPage(res http.ResponseWriter, req *http.Request) {
 	})
 	res.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := component.Render(req.Context(), res); err != nil {
-		log.Printf("Error rendering login page: %v", err)
+		s.Logger.Error("Error rendering anonymous login page", zap.Error(err))
 		http.Error(res, "Failed to render page", http.StatusInternalServerError)
 		return
 	}
