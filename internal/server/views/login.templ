@@ -1,0 +1,285 @@
+package views
+
+// LoginPageData contains the data needed to render the login page
+type LoginPageData struct {
+	IsLoggedIn  bool
+    Username    string
+    HasAccess   bool
+}
+
+// LoginPage renders the Plex OAuth login page
+templ LoginPage(data LoginPageData) {
+	<!DOCTYPE html>
+	<html>
+		<head>
+			<title>Login with Plex</title>
+			<style>
+				body {
+					font-family: Arial, sans-serif;
+					max-width: 600px;
+					margin: 50px auto;
+					padding: 20px;
+					text-align: center;
+					background-color: #1a1a1a;
+					color: #fff;
+				}
+				h1 { color: #e5a00d; }
+				p { color: #ccc; }
+				.auth-button {
+					display: inline-block;
+					background-color: #e5a00d;
+					color: #000;
+					padding: 15px 40px;
+					border: none;
+					border-radius: 5px;
+					font-weight: bold;
+					font-size: 16px;
+					margin: 20px 0;
+					cursor: pointer;
+					transition: background-color 0.2s;
+				}
+				.auth-button:hover {
+					background-color: #cc8800;
+				}
+				.auth-button:disabled {
+					background-color: #666;
+					cursor: not-allowed;
+					opacity: 0.6;
+				}
+				.loading {
+					margin-top: 30px;
+					color: #999;
+				}
+				.spinner {
+					border: 3px solid #282828;
+					border-top: 3px solid #e5a00d;
+					border-radius: 50%;
+					width: 40px;
+					height: 40px;
+					animation: spin 1s linear infinite;
+					margin: 20px auto;
+				}
+				@keyframes spin {
+					0% { transform: rotate(0deg); }
+					100% { transform: rotate(360deg); }
+				}
+				.status {
+                    background-color: #282828;
+                    padding: 20px;
+                    border-radius: 5px;
+                    margin: 20px 0;
+                }
+                .status-ok { color: #4CAF50; }
+                .status-error { color: #f44336; }
+                a {
+                    display: inline-block;
+                    background-color: #e5a00d;
+                    color: #000;
+                    padding: 15px 40px;
+                    border: none;
+                    border-radius: 5px;
+                    font-weight: bold;
+                    font-size: 16px;
+                    margin: 20px 0;
+                    text-decoration: none;
+                    transition: background-color 0.2s;
+                }
+                a.logout {
+                    padding: 10px 30px;
+                    font-size: 14px;
+                    margin: 10px 5px;
+                    background-color: #666;
+                }
+			</style>
+		</head>
+		<body>
+		    if !data.IsLoggedIn {
+                @loginForm(data)
+            } else if !data.HasAccess {
+                <h1>Access Denied</h1>
+                <p style="color: #ff4444;">Your Plex account ({ data.Username }) does not have access to this server.</p>
+            } else {
+                @userDetails(data)
+                @logoutButton()
+            }
+		</body>
+	</html>
+}
+
+templ loginForm(data LoginPageData) {
+	<h1>Login with Plex</h1>
+    <p>Authenticate with your Plex account to access this server.</p>
+    <button onclick="initiateLogin()" class="auth-button" id="loginButton">
+        Login with Plex
+    </button>
+    <div class="loading" id="loading" style="display:none;">
+        <div class="spinner"></div>
+        <p>Waiting for authentication...</p>
+        <p style="font-size: 14px; margin-top: 10px;">Complete the authentication in the popup window.</p>
+        <p style="font-size: 12px; color: #999; margin-top: 10px;">After approving, the popup will close automatically.</p>
+    </div>
+    <div id="status" style="margin-top: 20px;"></div>
+    <script>
+        let polling = false;
+        let pollInterval;
+        let authPopup;
+        let pinData = null;
+
+        async function initiateLogin() {
+            const button = document.getElementById('loginButton');
+            button.disabled = true;
+
+            try {
+                // Request PIN from server
+                const response = await fetch('/auth/generate-pin', {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to generate PIN');
+                }
+
+                pinData = await response.json();
+
+                // Small delay to show the PIN, then open modal
+                setTimeout(() => {
+                    openAuthPopup(pinData.auth_url, pinData.pin_id);
+                }, 1000);
+
+            } catch (error) {
+                console.error('Error initiating login:', error);
+                button.disabled = false;
+                document.getElementById('status').innerHTML =
+                    '<p style="color: #ff4444;">Failed to initiate login. Please try again.</p>';
+            }
+        }
+
+        function openAuthPopup(authURL, pinID) {
+            // Hide button
+            const button = document.getElementById('loginButton');
+            button.style.display = 'none';
+
+            // Open popup window centered on current window
+            const width = 600;
+            const height = 700;
+            const left = window.screenX + (window.outerWidth - width) / 2;
+            const top = window.screenY + (window.outerHeight - height) / 2;
+
+            authPopup = window.open(
+                authURL,
+                'PlexAuth',
+                'width=' + width + ',height=' + height + ',left=' + left + ',top=' + top + ',toolbar=no,menubar=no,scrollbars=yes,resizable=yes'
+            );
+
+            if (!authPopup) {
+                // Popup blocked - show button again
+                button.disabled = false;
+                button.style.display = 'inline-block';
+                document.getElementById('status').innerHTML =
+                    '<p style="color: #e5a00d;">Popup blocked! Please allow popups and try again.</p>' +
+                    '<p style="font-size: 14px; margin-top: 10px;">Or <a href="' + authURL + '" target="_blank" style="color: #e5a00d;">click here</a> to open in a new tab.</p>';
+                return;
+            }
+
+            // Start polling
+            startPolling(pinID);
+
+            // Show loading state
+            document.getElementById('loading').style.display = 'block';
+
+            // Check if popup is closed
+            const popupChecker = setInterval(function() {
+                if (authPopup && authPopup.closed) {
+                    clearInterval(popupChecker);
+                    if (polling) {
+                        // Give it a few more seconds to complete auth before giving up
+                        setTimeout(function() {
+                            if (polling) {
+                                stopPolling();
+                                document.getElementById('loading').style.display = 'none';
+                                document.getElementById('loginButton').style.display = 'inline-block';
+                                document.getElementById('loginButton').disabled = false;
+                                document.getElementById('status').innerHTML =
+                                    '<p style="color: #e5a00d;">Authentication window closed before completing. Please try again.</p>';
+                            }
+                        }, 5000); // Give 5 seconds grace period
+                    }
+                }
+            }, 500);
+        }
+
+        function startPolling(pinID) {
+            if (polling) return;
+            polling = true;
+
+            pollInterval = setInterval(() => checkAuth(pinID), 2000);
+            // Stop polling after 5 minutes
+            setTimeout(function() {
+                stopPolling();
+                document.getElementById('status').innerHTML =
+                    '<p style="color: #e5a00d;">Authentication timeout. <a href="#" onclick="initiateLogin(); return false;" style="color: #e5a00d; text-decoration: underline;">Click here</a> to try again.</p>';
+            }, 5 * 60 * 1000);
+        }
+
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                polling = false;
+            }
+        }
+
+        function checkAuth(pinID) {
+            fetch('/callback?pin_id=' + pinID)
+                .then(response => {
+                    if (response.ok) {
+                        stopPolling();
+                        // Close popup if still open
+                        if (authPopup && !authPopup.closed) {
+                            authPopup.close();
+                        }
+
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const redirectUrl = urlParams.get('redirect');
+                        if (redirectUrl) {
+                            window.location.href = redirectUrl;
+                            return;
+                        }
+
+                        // Reload the page to reflect logged-in state
+                        window.location.reload();
+                    } else if (response.status === 403) {
+                        stopPolling();
+                        if (authPopup && !authPopup.closed) {
+                            authPopup.close();
+                        }
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('status').innerHTML =
+                            '<p style="color: #ff4444;">You do not have access to this Plex server.</p>';
+                    } else if (response.status !== 401) {
+                        // Some other error
+                        console.error('Auth check failed:', response.status);
+                    }
+                    // 401 means not authenticated yet, keep polling
+                })
+                .catch(error => {
+                    console.error('Error checking auth:', error);
+                });
+        }
+	</script>
+}
+
+templ logoutButton() {
+    <a href="/logout" class="logout">Logout</a>
+}
+
+templ userDetails(data LoginPageData) {
+    <h1>Welcome Back!</h1>
+    <p>You are already logged in as { data.Username }.</p>
+    <div class="status">
+        if data.HasAccess {
+            <p class="status-ok"><strong>Server Access:</strong> Granted ✓</p>
+        } else {
+            <p class="status-error"><strong>Server Access:</strong> Denied ✗</p>
+        }
+    </div>
+}
