@@ -29,6 +29,11 @@ func (s *Server) deleteSessionCookie(res http.ResponseWriter, req *http.Request)
 		Secure:   s.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	}
+
+	if s.CookieDomain != "" {
+		clearedCookie.Domain = s.CookieDomain
+	}
+
 	http.SetCookie(res, clearedCookie)
 }
 
